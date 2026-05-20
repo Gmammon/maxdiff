@@ -62,6 +62,13 @@ label{font-size:14px;color:#555;display:block;margin-bottom:4px}
 .metric-box .m-label{font-size:11px;color:#888;margin-bottom:2px}.metric-box .m-value{font-size:15px;font-weight:700}
 .loading{text-align:center;color:#888;padding:40px}.error{color:var(--worst);padding:10px;background:#fce4ec;border-radius:8px;margin:10px 0}
 select{border:1px solid #ddd;border-radius:8px;padding:8px 12px;font-size:14px;font-family:inherit}
+.bar-row-centered{display:flex;align-items:center;margin-bottom:6px}
+.bar-track-centered{flex:1;height:28px;position:relative;display:flex;align-items:center;justify-content:center}
+.bar-center-line{position:absolute;left:50%;top:0;bottom:0;width:2px;background:#ddd;transform:translateX(-50%)}
+.bar-half{position:absolute;height:22px;border-radius:4px;transition:width .4s}
+.bar-half.right{left:50%}.bar-half.left{right:50%}
+.bar-val{position:absolute;font-size:11px;font-weight:600;color:#555;top:50%;transform:translateY(-50%);white-space:nowrap}
+.bar-val.right{right:4px}.bar-val.left{left:4px}
 </style>
 </head>
 <body>
@@ -466,29 +473,39 @@ function renderAnalysis(data) {
     attrs[attr].push({ name: item, level, utility: data.utilities[item], score: data.scores[item], se: data.standard_errors ? data.standard_errors[item] : NaN });
   });
 
-  // 属性重要性（各属性内效用极差）
+  // 属性重要性（各属性内效用极差，归一化到总和100）
   const attrData = Object.entries(attrs).map(([attr, levels]) => {
     const utils = levels.map(l => l.utility);
-    return { attr, importance: Math.max(...utils) - Math.min(...utils), levels };
-  }).sort((a, b) => b.importance - a.importance);
+    return { attr, range: Math.max(...utils) - Math.min(...utils), levels };
+  }).sort((a, b) => b.range - a.range);
+  const totalRange = attrData.reduce((s, a) => s + a.range, 0) || 1;
+  attrData.forEach(a => a.importance = a.range / totalRange * 100);
 
-  const maxImp = Math.max(...attrData.map(a => a.importance));
   document.getElementById('attrImportanceChart').innerHTML = attrData.map(({ attr, importance }) => {
-    const pct = maxImp > 0 ? (importance / maxImp * 100) : 0;
-    return `<div class="bar-row"><div class="bar-label" title="${attr}">${attr}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:var(--primary)"></div><div class="bar-value">${importance.toFixed(2)}</div></div></div>`;
+    return `<div class="bar-row"><div class="bar-label" title="${attr}">${attr}</div><div class="bar-track"><div class="bar-fill" style="width:${importance}%;background:var(--primary)"></div><div class="bar-value">${importance.toFixed(1)}%</div></div></div>`;
   }).join('');
 
-  // 每个属性的水平效用卡片
+  // 每个属性的水平效用卡片（组内居中为0，左负右正）
   const container = document.getElementById('attrLevelsContainer');
   const colors = ['#4a90d9','#4caf50','#ff9800','#e91e63','#9c27b0','#00bcd4','#795548','#607d8b'];
   container.innerHTML = attrData.map(({ attr, levels }, ci) => {
-    const sorted = [...levels].sort((a, b) => b.utility - a.utility);
-    const maxU = Math.max(...sorted.map(l => Math.abs(l.utility)));
+    const utils = levels.map(l => l.utility);
+    const mean = utils.reduce((s, v) => s + v, 0) / utils.length;
+    const centered = levels.map(l => ({ ...l, centered: l.utility - mean }));
+    const sorted = [...centered].sort((a, b) => b.centered - a.centered);
+    const maxAbs = Math.max(...sorted.map(l => Math.abs(l.centered))) || 1;
     const color = colors[ci % colors.length];
     let bars = sorted.map(l => {
-      const pct = maxU > 0 ? (Math.abs(l.utility) / maxU * 100) : 0;
-      const bg = l.utility >= 0 ? color : '#ccc';
-      return `<div class="bar-row"><div class="bar-label">${l.level}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${bg}"></div><div class="bar-value">${l.utility.toFixed(2)}</div></div></div>`;
+      const pct = Math.abs(l.centered) / maxAbs * 50;
+      const side = l.centered >= 0 ? 'right' : 'left';
+      return `<div class="bar-row-centered">
+        <div class="bar-label">${l.level}</div>
+        <div class="bar-track-centered">
+          <div class="bar-center-line"></div>
+          <div class="bar-half ${side}" style="width:${pct}%;background:${color}"></div>
+          <span class="bar-val ${side}">${l.centered >= 0 ? '+' : ''}${l.centered.toFixed(2)}</span>
+        </div>
+      </div>`;
     }).join('');
     return `<div class="card"><h2>${attr}</h2>${bars}</div>`;
   }).join('');
