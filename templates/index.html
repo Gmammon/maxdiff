@@ -161,10 +161,10 @@ select{border:1px solid #ddd;border-radius:8px;padding:8px 12px;font-size:14px;f
       </div>
     </div>
     <div id="analysisResult" class="hidden">
-      <div class="card"><h2>MLE 效用估计</h2><div class="metric-grid" id="metricsGrid"></div>
-        <table class="results-table" id="resultsTable"></table>
-        <div class="bar-chart" id="utilityChart"></div>
-      </div>
+      <div class="card"><h2>模型拟合</h2><div class="metric-grid" id="metricsGrid"></div></div>
+      <div class="card"><h2>属性重要性</h2><div class="bar-chart" id="attrImportanceChart"></div></div>
+      <div id="attrLevelsContainer"></div>
+      <div class="card"><h2>完整排名</h2><table class="results-table" id="resultsTable"></table></div>
     </div>
     <div id="countResult" class="hidden">
       <div class="card"><h2>计数模型（对照）</h2><table class="results-table" id="countTable"></table>
@@ -331,6 +331,7 @@ async function startNewRespondent() {
     const data = await api('/api/survey/start','POST',{project_id:currentProjectId});
     currentRespondentId = data.respondent_id;
     surveyState = {task_number:data.task_number, items:data.items, total_tasks:data.total_tasks, selectedBest:null, selectedWorst:null};
+    showPage('surveyPage');
     document.getElementById('surveyLogin').classList.add('hidden');
     document.getElementById('surveyDone').classList.add('hidden');
     document.getElementById('surveyCard').classList.remove('hidden');
@@ -455,6 +456,44 @@ function renderAnalysis(data) {
   if(data.consistency) html += addM('一致性',`${(data.consistency.mean*100).toFixed(0)}% 均值`,`n=${data.consistency.n_with_score}`);
   metrics.innerHTML = html;
 
+  // 按属性分组
+  const attrs = {};
+  data.items.forEach(item => {
+    const sep = item.includes('：') ? '：' : (item.includes(':') ? ':' : null);
+    const attr = sep ? item.split(sep)[0] : '其他';
+    const level = sep ? item.split(sep).slice(1).join(sep) : item;
+    if (!attrs[attr]) attrs[attr] = [];
+    attrs[attr].push({ name: item, level, utility: data.utilities[item], score: data.scores[item], se: data.standard_errors ? data.standard_errors[item] : NaN });
+  });
+
+  // 属性重要性（各属性内效用极差）
+  const attrData = Object.entries(attrs).map(([attr, levels]) => {
+    const utils = levels.map(l => l.utility);
+    return { attr, importance: Math.max(...utils) - Math.min(...utils), levels };
+  }).sort((a, b) => b.importance - a.importance);
+
+  const maxImp = Math.max(...attrData.map(a => a.importance));
+  document.getElementById('attrImportanceChart').innerHTML = attrData.map(({ attr, importance }) => {
+    const pct = maxImp > 0 ? (importance / maxImp * 100) : 0;
+    return `<div class="bar-row"><div class="bar-label" title="${attr}">${attr}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:var(--primary)"></div><div class="bar-value">${importance.toFixed(2)}</div></div></div>`;
+  }).join('');
+
+  // 每个属性的水平效用卡片
+  const container = document.getElementById('attrLevelsContainer');
+  const colors = ['#4a90d9','#4caf50','#ff9800','#e91e63','#9c27b0','#00bcd4','#795548','#607d8b'];
+  container.innerHTML = attrData.map(({ attr, levels }, ci) => {
+    const sorted = [...levels].sort((a, b) => b.utility - a.utility);
+    const maxU = Math.max(...sorted.map(l => Math.abs(l.utility)));
+    const color = colors[ci % colors.length];
+    let bars = sorted.map(l => {
+      const pct = maxU > 0 ? (Math.abs(l.utility) / maxU * 100) : 0;
+      const bg = l.utility >= 0 ? color : '#ccc';
+      return `<div class="bar-row"><div class="bar-label">${l.level}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${bg}"></div><div class="bar-value">${l.utility.toFixed(2)}</div></div></div>`;
+    }).join('');
+    return `<div class="card"><h2>${attr}</h2>${bars}</div>`;
+  }).join('');
+
+  // 完整排名表
   const ranked = Object.entries(data.scores).sort((a,b)=>b[1]-a[1]);
   const hasSE = data.standard_errors && !isNaN(data.standard_errors[ranked[0][0]]);
   let th = '<thead><tr><th>排名</th><th>选项</th><th>效用值</th>';
@@ -470,7 +509,6 @@ function renderAnalysis(data) {
   });
   th+='</tbody>';
   document.getElementById('resultsTable').innerHTML = th;
-  renderBarChart('utilityChart', ranked);
   document.getElementById('analysisResult').classList.remove('hidden');
 }
 
